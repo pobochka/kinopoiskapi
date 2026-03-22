@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { fetchMovies } from "../api/api";
 import type { Movie, Filters } from "../types/types";
 
@@ -10,23 +10,28 @@ export function useMovies(filters: Filters) {
   const [error, setError] = useState<string | null>(null);
 
   const filtersKey = JSON.stringify(filters);
-
-  // Сброс при смене фильтров
-  useEffect(() => {
-    setMovies([]);
-    setPage(1);
-    setHasMore(true);
-    setError(null);
-  }, [filtersKey]);
+  const prevFiltersKey = useRef(filtersKey);
+  const prevPage = useRef(page);
 
   useEffect(() => {
-    if (!hasMore || loading) return;
-
     let cancelled = false;
+
+    const filtersChanged = prevFiltersKey.current !== filtersKey;
+    if (filtersChanged) {
+      prevFiltersKey.current = filtersKey;
+      prevPage.current = 1;
+      setMovies([]);
+      setPage(1);
+      setHasMore(true);
+      setError(null);
+    }
+
+    const currentPage = filtersChanged ? 1 : page;
+
     setLoading(true);
 
     fetchMovies({
-      page,
+      page: currentPage,
       limit: 50,
       genres: filters.genres.length > 0 ? filters.genres : undefined,
       ratingMin: filters.ratingMin,
@@ -36,13 +41,19 @@ export function useMovies(filters: Filters) {
     })
       .then((data) => {
         if (cancelled) return;
-        setMovies((prev) => (page === 1 ? data.docs : [...prev, ...data.docs]));
-        setHasMore(page < data.pages && data.docs.length > 0);
+        setMovies((prev) => (currentPage === 1 ? data.docs : [...prev, ...data.docs]));
+        setHasMore(currentPage < data.pages && data.docs.length > 0);
       })
       .catch((err) => {
         if (cancelled) return;
         setHasMore(false);
-        setError(err.response?.status === 403 ? "Превышен лимит запросов. Попробуйте позже или смените API-ключ." : err.response?.status === 429 ? "Слишком много запросов. Подождите немного." : err.message || "Ошибка загрузки");
+        if (err.response?.status === 403) {
+          setError("Превышен лимит запросов. Попробуйте позже.");
+        } else if (err.response?.status === 429) {
+          setError("Слишком много запросов. Подождите.");
+        } else {
+          setError(err.message || "Ошибка загрузки");
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
